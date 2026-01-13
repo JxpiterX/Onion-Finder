@@ -15,25 +15,19 @@ import (
 	"onion-finder/internal/model"
 )
 
-// ChunkSize: size (in bytes) of each block read when scanning large files.
-// NumWorkers: number of concurrent goroutines processing files.
-// ChunkOverlap: number of bytes reused between chunks to avoid cutting
-// onion strings across chunk boundaries.
+// ChunkSize: size (in bytes) of each block read when scanning large files
+// NumWorkers: number of concurrent goroutines processing files. Set to 16 based on Arsenal Image Mounter decompression thread limits
+// ChunkOverlap: number of bytes reused between chunks to avoid cutting onion strings across chunk boundaries
 const (
 	ChunkSize    = 1024 * 1024 // 1 MB per chunk
-	NumWorkers   = 8           // parallel workers
+	NumWorkers   = 16          // parallel workers (optimal for E01 decompression)
 	ChunkOverlap = 128         // safety overlap between chunks
 )
 
-// onionRegex matches Tor v3 onion addresses:
-// - base32 charset [a-z2-7]
-// - minimum length relaxed to 56+ characters
-// - case-insensitive
+// onionRegex matches Tor v3 onion addresses
 var onionRegex = regexp.MustCompile(`(?i)[a-z2-7]{56,}\.onion`)
 
-// knownGenericOnions contains well-known public onion services
-// that are commonly embedded in browsers, extensions or rule lists.
-// These onions are excluded to avoid false positives.
+// These onions are excluded to avoid false positives in forensic analysis
 var knownGenericOnions = map[string]bool{
 	"duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion": true,
 	"reddittorjg6rue252oqsxryoxengawnmo46qy4kyii5wtqnwfj4ooad.onion": true,
@@ -41,15 +35,14 @@ var knownGenericOnions = map[string]bool{
 	"archiveiya74codqgiixo33q62qlrqtkgmcitqx5u2oeqnmn5bpcbiyd.onion": true,
 }
 
-// FileJob represents a unit of work processed by a worker.
-// Each job corresponds to one file on disk.
+// FileJob represents a unit of work processed by a worker
+// Each job corresponds to one file on disk that needs to be scanned
 type FileJob struct {
-	Path string      // full filesystem path
-	Info os.FileInfo // file metadata (size, permissions, etc.)
+	Path string      // full filesystem path to the file
+	Info os.FileInfo // file metadata (size, permissions, modification time, etc)
 }
 
-// isGenericOnion checks whether an onion address belongs
-// to the known public/generic deny-list.
+// isGenericOnion checks whether an onion address belongs to the known public/generic deny-list
 func isGenericOnion(value string) bool {
 	value = strings.ToLower(value)
 	return knownGenericOnions[value]
@@ -61,8 +54,8 @@ func isGenericOnion(value string) bool {
 ====================================================
 */
 
-// buildExcludedPaths returns system directories that should
-// not be scanned.
+// buildExcludedPaths returns system directories that should not be scanned during forensic analysis
+// These directories typically contain OS files with no user activity
 func buildExcludedPaths(mountRoot string) []string {
 	mountRoot = filepath.Clean(mountRoot)
 
@@ -74,7 +67,7 @@ func buildExcludedPaths(mountRoot string) []string {
 	}
 }
 
-// isExcludedPath checks whether a path is under an excluded directory.
+// isExcludedPath checks whether a path is under an excluded directory
 func isExcludedPath(path string, excluded []string) bool {
 	path = strings.ToLower(filepath.Clean(path))
 
@@ -95,14 +88,14 @@ func isExcludedPath(path string, excluded []string) bool {
 
 // scanFile scans a single file for onion addresses.
 // It detects encoding (UTF-16LE vs others) and chooses
-// the appropriate scanning strategy.
+// the appropriate scanning strategy to avoid missing matches.
 func scanFile(path string) []model.Onion {
 	results := []model.Onion{}
-	seen := make(map[string]bool)
+	seen := make(map[string]bool) // local deduplication within this file
 
 	file, err := os.Open(path)
 	if err != nil {
-		return results
+		return results // silently skip unreadable files
 	}
 	defer file.Close()
 
@@ -110,14 +103,14 @@ func scanFile(path string) []model.Onion {
 	firstChunk := make([]byte, 4096)
 	n, _ := file.Read(firstChunk)
 	if n == 0 {
-		return results
+		return results // empty file
 	}
-	file.Seek(0, 0)
+	file.Seek(0, 0) // reset to beginning
 
 	isUTF16LE := detectUTF16LE(firstChunk[:n])
 
 	if isUTF16LE {
-		// Decode entire file as UTF-16LE text
+		// UTF-16LE text file: decode entire file and search as string
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return results
@@ -130,7 +123,7 @@ func scanFile(path string) []model.Onion {
 			value := strings.ToLower(match)
 
 			if isGenericOnion(value) {
-				continue
+				continue // skip known generic onions
 			}
 
 			if !seen[value] {
@@ -142,7 +135,7 @@ func scanFile(path string) []model.Onion {
 			}
 		}
 	} else {
-		// Binary / large file → chunked scanning
+		// Binary or large file → use chunked scanning with overlap
 		results = scanFileChunked(file, path)
 	}
 
@@ -150,7 +143,8 @@ func scanFile(path string) []model.Onion {
 }
 
 // scanFileChunked scans files incrementally using overlapping chunks
-// to handle large and binary files efficiently.
+// to handle large and binary files efficiently without loading entire file in memory.
+// Overlap prevents splitting onion addresses across chunk boundaries.
 func scanFileChunked(file *os.File, path string) []model.Onion {
 	results := []model.Onion{}
 	seen := make(map[string]bool)
@@ -159,14 +153,17 @@ func scanFileChunked(file *os.File, path string) []model.Onion {
 	overlap := make([]byte, 0)
 
 	for {
+		// Read next chunk, appending after overlap bytes
 		n, err := file.Read(buffer[len(overlap):])
 		if n == 0 {
-			break
+			break // end of file
 		}
 
+		// Prepend overlap from previous chunk
 		copy(buffer, overlap)
 		totalLen := len(overlap) + n
 
+		// Scan this chunk for onion addresses
 		matches := scanChunk(buffer[:totalLen])
 		for _, match := range matches {
 			value := strings.ToLower(match)
@@ -185,10 +182,10 @@ func scanFileChunked(file *os.File, path string) []model.Onion {
 		}
 
 		if err != nil {
-			break
+			break // read error or EOF
 		}
 
-		// Preserve overlap for next chunk
+		// Preserve overlap for next chunk to avoid splitting onion addresses
 		if totalLen > ChunkOverlap {
 			overlap = make([]byte, ChunkOverlap)
 			copy(overlap, buffer[totalLen-ChunkOverlap:totalLen])
@@ -199,16 +196,19 @@ func scanFileChunked(file *os.File, path string) []model.Onion {
 }
 
 // scanChunk extracts onion addresses from a raw byte slice.
+// Uses two strategies:
+// 1. Direct regex on raw bytes (catches clean text)
+// 2. Extract valid onion chars only, then regex (catches binary-embedded onions)
 func scanChunk(data []byte) []string {
 	results := []string{}
 
-	// Direct regex on raw bytes
+	// Strategy 1: Direct regex on raw bytes
 	matches := onionRegex.FindAll(data, -1)
 	for _, match := range matches {
 		results = append(results, string(match))
 	}
 
-	// Extract only valid onion characters (useful for binary blobs)
+	// Strategy 2: Extract only valid onion characters (useful for binary blobs)
 	cleaned := extractOnionChars(data)
 	matches2 := onionRegex.FindAllString(cleaned, -1)
 	results = append(results, matches2...)
@@ -217,22 +217,25 @@ func scanChunk(data []byte) []string {
 }
 
 // extractOnionChars filters a byte stream to retain only characters
-// valid in onion addresses, replacing others with separators.
+// valid in onion addresses ([a-z2-7.]), replacing others with spaces.
+// This helps extract onions embedded in binary data or mixed encodings.
 func extractOnionChars(data []byte) string {
 	var buf bytes.Buffer
-	buf.Grow(len(data) / 2)
+	buf.Grow(len(data) / 2) // preallocate buffer
 
 	for _, b := range data {
 		if b == 0x00 {
-			continue
+			continue // skip null bytes
 		}
 
 		if isValidOnionChar(b) {
+			// Normalize uppercase to lowercase
 			if b >= 'A' && b <= 'Z' {
-				b += 32 // normalize to lowercase
+				b += 32
 			}
 			buf.WriteByte(b)
 		} else {
+			// Replace invalid chars with space (word separator)
 			if buf.Len() > 0 && buf.Bytes()[buf.Len()-1] != ' ' {
 				buf.WriteByte(' ')
 			}
@@ -242,7 +245,8 @@ func extractOnionChars(data []byte) string {
 	return buf.String()
 }
 
-// isValidOnionChar checks if a byte belongs to the onion charset.
+// isValidOnionChar checks if a byte belongs to the onion charset:
+// base32 ([a-z2-7]) or dot (.)
 func isValidOnionChar(b byte) bool {
 	return (b >= 'a' && b <= 'z') ||
 		(b >= 'A' && b <= 'Z') ||
@@ -251,17 +255,20 @@ func isValidOnionChar(b byte) bool {
 }
 
 // detectUTF16LE heuristically detects UTF-16LE encoding.
+// Uses two methods:
+// 1. Check for UTF-16LE BOM (0xFF 0xFE)
+// 2. Heuristic: many null bytes in odd positions (typical of ASCII in UTF-16LE)
 func detectUTF16LE(data []byte) bool {
 	if len(data) < 2 {
 		return false
 	}
 
-	// BOM check
+	// Check for BOM (Byte Order Mark)
 	if data[0] == 0xFF && data[1] == 0xFE {
 		return true
 	}
 
-	// Heuristic: many null bytes in odd positions
+	// Heuristic: UTF-16LE has nulls in odd byte positions for ASCII text
 	nullCount := 0
 	sampleSize := min(len(data), 200)
 	for i := 1; i < sampleSize; i += 2 {
@@ -270,30 +277,36 @@ func detectUTF16LE(data []byte) bool {
 		}
 	}
 
+	// If >25% of odd bytes are null, likely UTF-16LE
 	return nullCount > sampleSize/4
 }
 
 // decodeUTF16LE decodes UTF-16LE byte data into a UTF-8 Go string.
+// Handles BOM if present and ensures even byte count.
 func decodeUTF16LE(data []byte) string {
 	if len(data) < 2 {
 		return ""
 	}
 
 	start := 0
+	// Skip BOM if present
 	if data[0] == 0xFF && data[1] == 0xFE {
 		start = 2
 	}
 
+	// Ensure even byte count (UTF-16 uses 2 bytes per character)
 	if (len(data)-start)%2 != 0 {
 		data = data[:len(data)-1]
 	}
 
+	// Convert bytes to uint16 slice (little-endian)
 	u16 := make([]uint16, (len(data)-start)/2)
 	for i := 0; i < len(u16); i++ {
 		u16[i] = uint16(data[start+i*2]) |
 			uint16(data[start+i*2+1])<<8
 	}
 
+	// Decode UTF-16 to UTF-8 string
 	return string(utf16.Decode(u16))
 }
 
@@ -304,34 +317,43 @@ func decodeUTF16LE(data []byte) string {
 */
 
 // ScanForOnions scans a mounted filesystem and extracts Tor .onion
-// addresses using a worker pool.
+// addresses using a worker pool architecture.
 //
 // High-level flow:
-// 1. Walk the filesystem
-// 2. Send files to a job channel
-// 3. Workers scan files in parallel
-// 4. Results are deduplicated and collected safely
+// 1. Walk the filesystem (main goroutine)
+// 2. Send files to a buffered job channel
+// 3. Workers pull jobs from channel and scan files in parallel
+// 4. Results are deduplicated and collected safely with mutex
+// 5. Progress is reported every minute
+//
+// Concurrency design:
+// - NumWorkers goroutines scan files in parallel
+// - Buffered channel (100 jobs) prevents blocking filesystem walk
+// - Mutex protects shared results slice and deduplication map
+// - Atomic counter tracks files processed across workers
 func ScanForOnions(root string) ([]model.Onion, error) {
 
-	// Final results slice (shared between workers)
+	// Final results slice (shared between workers, protected by mutex)
 	results := []model.Onion{}
 
 	// Mutex protecting concurrent access to results + seen map
 	resultsMux := sync.Mutex{}
 
-	// Global deduplication map: onion_value|path
+	// Global deduplication map: key format = "onion_value|path"
+	// Allows same onion in different files but deduplicates within same file
 	seen := make(map[string]bool)
 
-	// Buffered channel used as a job queue
+	// Buffered channel used as a job queue (100 jobs buffer)
+	// Buffer size prevents filesystem walker from blocking on worker availability
 	jobs := make(chan FileJob, 100)
 
-	// WaitGroup used to wait for all workers to finish
+	// WaitGroup used to wait for all workers to finish processing
 	wg := sync.WaitGroup{}
 
-	// Build exclusion list (system directories, not relevant for DFIR)
+	// Build exclusion list (system directories not relevant for forensic analysis)
 	excluded := buildExcludedPaths(root)
 
-	// Atomic counter for progress reporting
+	// Atomic counter for progress reporting (thread-safe increment)
 	var filesProcessed uint64
 	start := time.Now()
 
@@ -339,6 +361,7 @@ func ScanForOnions(root string) ([]model.Onion, error) {
 		----------------------------------------------------
 		 Progress reporting goroutine
 		----------------------------------------------------
+		Prints scan progress every minute without blocking workers
 	*/
 	done := make(chan struct{})
 	go func() {
@@ -348,6 +371,7 @@ func ScanForOnions(root string) ([]model.Onion, error) {
 		for {
 			select {
 			case <-ticker.C:
+				// Safely read current progress
 				resultsMux.Lock()
 				onionCount := len(results)
 				resultsMux.Unlock()
@@ -360,7 +384,7 @@ func ScanForOnions(root string) ([]model.Onion, error) {
 				)
 
 			case <-done:
-				return
+				return // stop when scanning is complete
 			}
 		}
 	}()
@@ -369,6 +393,7 @@ func ScanForOnions(root string) ([]model.Onion, error) {
 		----------------------------------------------------
 		 Worker pool
 		----------------------------------------------------
+		NumWorkers goroutines process files concurrently
 	*/
 	for i := 0; i < NumWorkers; i++ {
 		wg.Add(1)
@@ -376,16 +401,16 @@ func ScanForOnions(root string) ([]model.Onion, error) {
 		go func() {
 			defer wg.Done()
 
-			// Each worker continuously reads from the job channel
+			// Each worker continuously reads from the job channel until it's closed
 			for job := range jobs {
 
 				// Scan one file for onion addresses
 				onions := scanFile(job.Path)
 
-				// Increment processed file counter atomically
+				// Increment processed file counter atomically (thread-safe)
 				atomic.AddUint64(&filesProcessed, 1)
 
-				// Merge results safely
+				// Merge results safely with mutex protection
 				resultsMux.Lock()
 				for _, onion := range onions {
 					key := onion.Value + "|" + onion.Path
@@ -403,21 +428,22 @@ func ScanForOnions(root string) ([]model.Onion, error) {
 		----------------------------------------------------
 		 Filesystem traversal
 		----------------------------------------------------
+		Main goroutine walks filesystem and dispatches files to workers
 	*/
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return nil
+			return nil // skip unreadable paths
 		}
 
-		// Skip excluded directories
+		// Skip excluded directories (Windows system folders)
 		if isExcludedPath(path, excluded) {
 			if d.IsDir() {
-				return filepath.SkipDir
+				return filepath.SkipDir // don't recurse into excluded dirs
 			}
 			return nil
 		}
 
-		// Detect onion addresses in filenames
+		// Detect onion addresses in filenames themselves
 		filename := filepath.Base(path)
 		matches := onionRegex.FindAllString(filename, -1)
 		if len(matches) > 0 {
@@ -441,29 +467,32 @@ func ScanForOnions(root string) ([]model.Onion, error) {
 			resultsMux.Unlock()
 		}
 
-		// Do not send directories to workers
+		// Do not send directories to workers (only files)
 		if d.IsDir() {
 			return nil
 		}
 
-		// Skip very large files (>500MB) ???
+		// Skip very large files (>500MB) to avoid excessive processing time
 		info, err := d.Info()
 		if err != nil || info.Size() > 500*1024*1024 {
 			return nil
 		}
 
-		// Send file to worker pool
+		// Send file to worker pool via job channel
 		jobs <- FileJob{Path: path, Info: info}
 		return nil
 	})
 
-	// Close job channel and wait for workers
+	// Close job channel to signal workers that no more jobs are coming
 	close(jobs)
+
+	// Wait for all workers to finish processing remaining jobs
 	wg.Wait()
 
-	// Stop progress goroutine
+	// Stop progress reporting goroutine
 	close(done)
 
+	// Print final summary
 	fmt.Printf(
 		"[+] Scan finished: %d files processed | %d onions found | total time: %s\n",
 		filesProcessed,
