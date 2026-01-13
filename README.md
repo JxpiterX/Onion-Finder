@@ -79,7 +79,7 @@ Go is required to build and run the tool.
 2. Install it using the default settings
 3. Verify the installation:
 ```bash
-go --version
+go version
 ```
 Make sure the reported version is 1.21 or higher.
 
