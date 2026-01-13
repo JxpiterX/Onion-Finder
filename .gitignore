@@ -4,6 +4,7 @@
 *.log
 results.txt
 onion.txt
+scan.go.bak
 *.tmp
 
 
@@ -19,4 +20,3 @@ Thumbs.db
 # --------------------------------------------------
 go.work
 go.work.sum
-go.bak
