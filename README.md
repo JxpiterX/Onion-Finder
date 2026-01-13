@@ -70,7 +70,7 @@ onion-finder/
 
 ### Installation
 
-###### Requirements
+##### Requirements
 
 The following components are required to run Onion Finder:
 
@@ -81,7 +81,7 @@ The following components are required to run Onion Finder:
 
 
 
-###### I. Install Go
+##### I. Install Go
 
 Go is required to build and run the tool.
 
@@ -91,11 +91,10 @@ Go is required to build and run the tool.
 ```bash
 go version
 ```
-Make sure the reported version is 1.21 or higher.
+Make sure the reported version is 1.21 or higher.··
 
 
-
-###### II. Install Arsenal Image Mounter (AIM)
+##### II. Install Arsenal Image Mounter (AIM)
 
 Arsenal Image Mounter is used to mount E01 forensic disk images in read-only mode.
 
@@ -103,11 +102,10 @@ Arsenal Image Mounter is used to mount E01 forensic disk images in read-only mod
 2. Install the application.
 3. Ensure the aim_cli.exe binary is accessible from the system PATH, or located in a known directory.
 
-Administrator privileges are required for disk mounting operations.
+Administrator privileges are required for disk mounting operations.··
 
 
-
-###### III. Install Tor Browser 
+##### III. Install Tor Browser 
 
 Tor Browser is required to anonymously check the availability of detected `.onion` services.
 
@@ -115,11 +113,10 @@ Tor Browser is required to anonymously check the availability of detected `.onio
 2. Install Tor Browser using the default configuration.
 3. Launch Tor Browser at least once to complete the initial setup and ensure the Tor service can start correctly.
 
-The tool relies on the local Tor service provided by Tor Browser to perform availability checks.
+The tool relies on the local Tor service provided by Tor Browser to perform availability checks.··
 
 
-
-###### IV. Build the Tool
+##### IV. Build the Tool
 
 Clone the repository and build the binary:
 ```bash
