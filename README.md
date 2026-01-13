@@ -1,4 +1,4 @@
-# Onion Finder
+## Onion Finder
 
 Onion Finder is a **digital forensics tool for Windows** designed to scan disk images or mounted filesystems  
 in order to detect **Tor v3 `.onion` addresses**.
@@ -15,24 +15,25 @@ This tool is intended for DFIR analysts investigating:
 - Malware artifacts
 - OSINT or cybercrime cases
 
----
-
-## Features
-
-[X] = Available  
-[ ] = Upcoming
-
-[x] Mount E01 forensic images (read-only)
-[x] Recursively scan filesystems
-[x] Detect Tor v3 `.onion` addresses
-[x] Extract full paths of occurrences
-[x] Tor availability check
-[ ] Retrieve HTTP headers to analyze service content
-[x] Generate forensic reports
 
 ---
 
-## Architecture
+
+### Features
+
+- Mount E01 forensic images (read-only)
+- Recursively scan filesystems
+- Detect Tor v3 `.onion` addresses
+- Extract full paths of occurrences
+- Tor availability check
+- Upcoming : Retrieve HTTP headers to analyze service content
+- Generate forensic reports
+
+
+---
+
+
+### Architecture
 
 The project follows a clean internal architecture:
 ```bash
@@ -63,11 +64,13 @@ onion-finder/
 
 > All generated artifacts (`results.txt`, `onion.txt`) are excluded from version control via `.gitignore`.
 
+
 ---
 
-## Installation
 
-### Requirements
+### Installation
+
+###### Requirements
 
 The following components are required to run Onion Finder:
 
@@ -76,7 +79,9 @@ The following components are required to run Onion Finder:
 - **Tor Browser**
 - **Windows Administrator privileges** (required for disk image mounting)
 
-### I. Install Go
+
+
+###### I. Install Go
 
 Go is required to build and run the tool.
 
@@ -88,7 +93,9 @@ go version
 ```
 Make sure the reported version is 1.21 or higher.
 
-### II. Install Arsenal Image Mounter (AIM)
+
+
+###### II. Install Arsenal Image Mounter (AIM)
 
 Arsenal Image Mounter is used to mount E01 forensic disk images in read-only mode.
 
@@ -98,7 +105,9 @@ Arsenal Image Mounter is used to mount E01 forensic disk images in read-only mod
 
 Administrator privileges are required for disk mounting operations.
 
-### III. Install Tor Browser 
+
+
+###### III. Install Tor Browser 
 
 Tor Browser is required to anonymously check the availability of detected `.onion` services.
 
@@ -108,7 +117,9 @@ Tor Browser is required to anonymously check the availability of detected `.onio
 
 The tool relies on the local Tor service provided by Tor Browser to perform availability checks.
 
-### IV. Build the Tool
+
+
+###### IV. Build the Tool
 
 Clone the repository and build the binary:
 ```bash
