@@ -24,6 +24,9 @@ const (
 	ChunkOverlap = 128         // safety overlap between chunks
 )
 
+var activeWorkers int32
+var maxActiveWorkers int32
+
 // onionRegex matches Tor v3 onion addresses
 var onionRegex = regexp.MustCompile(`(?i)[a-z2-7]{56,}\.onion`)
 
@@ -46,6 +49,19 @@ type FileJob struct {
 func isGenericOnion(value string) bool {
 	value = strings.ToLower(value)
 	return knownGenericOnions[value]
+}
+
+// updateMax updates the maximum value reached by activeWorkers
+func updateMax(current int32) {
+	for {
+		old := atomic.LoadInt32(&maxActiveWorkers)
+		if current <= old {
+			return
+		}
+		if atomic.CompareAndSwapInt32(&maxActiveWorkers, old, current) {
+			return
+		}
+	}
 }
 
 /*
@@ -404,13 +420,17 @@ func ScanForOnions(root string) ([]model.Onion, error) {
 			// Each worker continuously reads from the job channel until it's closed
 			for job := range jobs {
 
+				// ---- Worker activity tracking (DEBUG) ----
+				current := atomic.AddInt32(&activeWorkers, 1)
+				updateMax(current)
+
 				// Scan one file for onion addresses
 				onions := scanFile(job.Path)
 
-				// Increment processed file counter atomically (thread-safe)
+				// File processed
 				atomic.AddUint64(&filesProcessed, 1)
 
-				// Merge results safely with mutex protection
+				// Merge results
 				resultsMux.Lock()
 				for _, onion := range onions {
 					key := onion.Value + "|" + onion.Path
@@ -420,6 +440,9 @@ func ScanForOnions(root string) ([]model.Onion, error) {
 					}
 				}
 				resultsMux.Unlock()
+
+				// ---- Worker done (DEBUG) ----
+				atomic.AddInt32(&activeWorkers, -1)
 			}
 		}()
 	}
@@ -498,6 +521,12 @@ func ScanForOnions(root string) ([]model.Onion, error) {
 		filesProcessed,
 		len(results),
 		time.Since(start).Truncate(time.Minute),
+	)
+
+	fmt.Printf(
+		"[DEBUG] Max concurrent workers used: %d / %d\n",
+		maxActiveWorkers,
+		NumWorkers,
 	)
 
 	return results, err
