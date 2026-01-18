@@ -20,7 +20,7 @@ import (
 // ChunkOverlap: number of bytes reused between chunks to avoid cutting onion strings across chunk boundaries
 const (
 	ChunkSize    = 1024 * 1024 // 1 MB per chunk
-	NumWorkers   = 256         // parallel workers (optimal for E01 decompression)
+	NumWorkers   = 128         // parallel workers (optimal for E01 decompression)
 	ChunkOverlap = 128         // safety overlap between chunks
 )
 
